@@ -1,0 +1,253 @@
+---
+title: "MATHS 7107 Data Taming Assignment 5"
+output: 
+  pdf_document:
+    fig_caption: yes
+    extra_dependencies: ["float"]
+date: "`r Sys.Date()`"
+author: "Ky Phong Mai"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.pos ="H", out.extra = "", echo = TRUE)
+```
+
+# Data Cleaning
+### 1. Read data into R, make sure it is a tibble. Display first 6 rows of dataset
+```{r message = F}
+pacman::p_load(tidyverse, readr, skimr, tidymodels, themis)
+```
+```{r message = F}
+affairs <- read_csv("affairs.csv") %>% as_tibble()  #make sure it is a tibble
+affairs %>%head() #result shows that it is read in correctly
+```
+The dataset is read in correctly, however, the variable types are not read in correctly
+
+### 2. What is the outcome variable, and what are the predictors
+
+* Outcome variable: *affair*, an indicator of whether the participant had engaged in an affair
+* Predictor variables: the remaining variables including:
+  - *sex*, sex of participant
+  - *age*, age in years of the participant
+  - *ym*, number of years the participant had been married
+  - *child*, indicator of whether they have a child
+  - *religious*, indicator of how religious are they
+  - *education*, years of education
+  - *occupation*, job status according to Hollinghead classification
+  - *rate*, indicator of how they rate their marriage
+  
+### 3. Skim the data. Is there any missing data? How many observations and variables do we have? Have any variables been read in incorrectly
+```{r}
+skim_without_charts(affairs) #Use skim_without_charts instead of skim
+```
+* There is no missing data
+* There are 601 observations and 9 variables
+* The variables have been read in incorrectly, including:
+  - **sex** and **child** should be changed from character to *categorical* 
+  - **affair** should be changed from numeric to *categorical*
+  - Note that: **religious**, **education**, **occupation**, **rate** should be *categorical* instead of numeric. However, whether to convert type of these variables depends on how we want to analyze the data. 
+
+### 4. Convert the affair variable to a yes/no response (the function ifelse or case_when will be useful). Change all character variables to factors
+```{r}
+affairs <- affairs%>%
+  mutate(affair = factor(ifelse(affair == "1", "Yes", "No")),
+         sex = factor(sex),
+         child = factor(child))
+affairs %>% head()
+```
+### 5. Skim the data again and answer the following
+```{r}
+skim_without_charts(affairs)
+```
+(a) **150** people responded as having had affair. **430** people responded as having children
+(b) Mean age of respondents is **32.488**. Mean response on religious scale is **3.116**
+
+# Exploratory analysis
+### 1. Proportion of female for those who responded Yes and No to having an affair.
+```{r}
+affairs %>% 
+  count(affair, sex) %>%
+  group_by(affair) %>%
+  mutate (proportion = n/sum(n))
+```
+
+* Of the participants who responded "No" to an affair, 53.880% are female
+* Of the participants who responded "Yes" to an affair, 48% are female
+
+It does not appear to have a difference in the proportion of females who will have an affair and those who will not
+
+### 2. Proportion of having children for those who responded Yes and No to having an affair
+
+```{r}
+affairs %>% 
+  count(affair, child) %>%
+  group_by(affair) %>%
+  mutate(proportion = n/sum(n))
+```
+
+* 82% of participants who responded "yes" to having an affair had children
+* 68.071% of participants who responded "no" to having an affair had children
+
+Based on this, if you have an affair, you are more likely to have children. However, at this stage, we can't draw any conclusion on causality. 
+\newpage
+
+# Split and preprocess
+### 1. Using initial_split, create an rsplit of the affairs data
+```{r}
+set.seed(1234)
+affairs_split <- initial_split (affairs)
+affairs_split
+```
+
+* 450 observations in training set
+* 151 observations in testing set
+
+### 2. Use the functions training and testing to obtain the test and training sets. Display first 6 rows of training set
+```{r}
+affairs_train <- training(affairs_split)
+affairs_test <- testing (affairs_split)
+affairs_train %>% head()
+```
+### 3. Purpose of step_downsample from themis package
+
+* step_downsample is one of the preprocessing step that removes rows of data to make occurrence of levels for a factor variable equal. In other words, for a specific factor variable, this technique will remove observations of the majority level to match with the number of observations of the minority level. Thus, the number of observations for each level in a factor variable will be the same. step_downsample creates a specification of a recipe step.
+
+* We want to down sample our data to tackle the issue of class imbalance. If the number of classes are imbalanced, the model will not be able to learn enough from the minority class as it will spend most of its time learning from majority class. In other words, the predictive power for minority class will be very low as compared to the majority class. The model is biased towards the class with a large number of training observations. There are other techniques to handle class imbalance issue as well and it depends on nature of the data set and the model we to fit the data to decide on which method we should use in each case. 
+
+### 4. Create a recipe, based off of our training data:
+```{r}
+affairs_recipe <- recipe(affair ~ ., data = affairs_train) %>%
+  themis::step_downsample(affair) %>%
+  step_dummy (all_factor_predictors()) %>%
+  step_normalize(all_predictors()) %>%
+  prep()
+
+affairs_recipe
+```
+
+### 5. Complete the following:
+(a) Use the function juice (on the recipe) to get your preprocessed training set
+```{r}
+affairs_train_preprocess <- juice(affairs_recipe)
+affairs_train_preprocess %>% head()
+```
+(b) Use the function bake (on the recipe and testing split) to get your preprocessed testing set. This can be both be done in the one function.
+```{r}
+affairs_test_preprocess <- bake (affairs_recipe, affairs_test)
+affairs_test_preprocess %>% head()
+```
+
+### 6. Skim the preprocessed training data. Explain if the 3 preprocessing steps have done what you expect.
+```{r}
+skim_without_charts(affairs_train_preprocess)
+```
+The 3 preprocessing steps have done what we expect. From the table above, we can see that the number of Yes and No for our outcome variable (**affair**) are balanced at 117 now. There are no more categorical variables except for our outcome variable. The categorical predictors **sex** and **child** were converted to dummy variables and are presented as **sex_male** and **child_yes**. All of the predictors are also normalized with mean of 0 and sd of 1.
+
+# Tune and fit a model
+### 1. Make a model specification for a k-nearest neighbors model. In the model specification, define that we would like to tune() the neighbors parameter
+```{r}
+knn_spec <- nearest_neighbor(mode = "classification", neighbors = tune()) %>%
+  set_engine("kknn")
+```
+
+### 2. Create a 5-fold cross validation set from the preprocessed training data. Be sure to set a seed for reproducibility using set.seed(1234)
+```{r}
+set.seed(1234)
+affairs_cv <- vfold_cv(data = affairs_train_preprocess, v = 5)
+```
+
+### 3. Use grid_regular to make a grid of k-values to tune our model on. Using levels get 25 unique values for k. You also need to set your neighbors to range from 5 to 75
+```{r}
+params_grid <- grid_regular (neighbors(range = c(5,75)), levels = 25)
+params_grid
+```
+### 4. Use tune_grid to tune your k-nearest neighbours model using your cross validation sets and grid of k-values
+```{r}
+knn_tuned <- tune_grid (object = knn_spec,
+                        preprocessor = recipe(affair ~., data = affairs_train_preprocess),
+                        resamples = affairs_cv,
+                        grid = params_grid)
+```
+
+### 5. What is the value of k that gives the best accuracy based on our tuned model? (Hint: the function select_best will be useful with tuned model as the first parameter and “accuracy” as the second parameter)
+```{r}
+best_accuracy <- select_best (knn_tuned, "accuracy")
+best_accuracy
+```
+k = 37 will give the best accuracy based on the tuned model
+
+### 6. Finalise the k-nearest model using your results from question 6. Print the model specification to make sure it worked. (Hint: the using finalize_model() function is useful here)
+
+```{r}
+affairs_final_knn <- finalize_model (knn_spec, best_accuracy)
+affairs_final_knn
+```
+### 7. Fit your finalised model to the preprocessed training data and save it with the variable name affairs_knn
+```{r}
+affairs_knn <- affairs_final_knn %>%
+  fit(affair~., data = affairs_train_preprocess)
+
+affairs_knn
+```
+
+# Evaluation
+### 1. Obtain class predictions using your finalised model from the preprocessed test set using predict. Print the first 6 rows to make sure it worked.
+```{r}
+affairs_test_pred <- predict(affairs_knn, new_data = affairs_test_preprocess)
+affairs_test_pred %>% head()
+```
+### 2. Add the true value of affair from the testing data to your predictions (Hint: you could use bind_cols( select( preprocessed_test_data, affair) ). You will need to change the variable names. Print the first 6 rows to make sure this worked
+```{r}
+affairs_test_pred<- affairs_test_pred %>% rename(affair_pred = .pred_class) %>%
+  bind_cols(affairs_test_preprocess %>%
+              select(affair))
+affairs_test_pred %>% head()
+```
+
+### 3. Get a confusion matrix 
+```{r}
+affairs_test_pred %>%
+  conf_mat (truth = affair, estimate = affair_pred)
+```
+### 4. From your confusion matrix, calculate the sensitivity and specificity of your model. Interpret these values in context
+```{r}
+categorical_metrics <- metric_set(sensitivity, specificity)
+affairs_test_pred %>%
+  categorical_metrics(
+    truth = affair,
+    estimate = affair_pred
+  )
+```
+
+- sensitivity is 68.644%. This means that, 68.644% of those who do not have an affair have been correctly classified as not having an affair
+- specificity is 66.667%. This means that, 66.667% of those who have an affair have been correctly classified as having an affair
+
+### 5. I have a friend: let’s call him Bono. Bono is a large alpha male from Liverpool. He is 47 years old, has been married for 15 years and has no children. He places his religious beliefs at a 2, his occupation at a 6, his education at a 20, and he rates his marriage at an astounding 5.
+(a) Make a tibble containing Bono's information.
+```{r}
+bono <- tibble (sex = factor('male'),
+                age = 47,
+                ym = 15,
+                child = factor('no'),
+                religious = 2,
+                occupation = 6,
+                education = 20,
+                rate = 5)
+
+bono
+```
+
+(b) Use bake to preprocess Bono's information with the recipe
+```{r}
+bono_preprocess <- bake (affairs_recipe, bono)
+bono_preprocess
+```
+(c) Using the predict() function, obtain a predicted probability (i.e. with type = "prob") that Bono will
+have an affair
+
+```{r}
+predict(affairs_knn, new_data = bono_preprocess, type = "prob")
+```
+Based on the model, it is predicted that there is 62.55% chance that Bono will have an affair
+
+(d) Given the model, I would not be comfortable going to Bono's partner with my prediction. As the sensitivity of the model is only 68.6% on the test data, this means that if we use the model for prediction, 31.4% of people who do not have an affair are incorrectly classified as having an affair. Because 31.4% is a very high percentage given this being a very sensitive and personal topic, it is not wise to jump to the conclusion based on the prediction. 

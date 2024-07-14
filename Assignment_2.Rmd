@@ -1,0 +1,240 @@
+---
+title: "MATHS 7107 Data Taming Assignment 2"
+output: 
+  pdf_document:
+    fig_caption: yes
+    extra_dependencies: ["float"]
+    
+date: "2023-02-26"
+author: "Ky Phong Mai"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.pos ="H", out.extra = "", echo = TRUE)
+```
+
+# Question One: Reading and cleaning
+Load the data contained in ashes.csv into R
+```{r}
+pacman::p_load(tidyverse,readr,knitr)
+```
+
+```{r message = FALSE}
+cricket <-read_csv("ashes.csv")
+cricket
+```
+## (a) In order to make data tidy:
+Rearrange the data into long format
+```{r}
+cricket_long <- gather(cricket, key = innings, value = performance, 
+                       `Test 1_Innings_1`:`Test 5_Innings_2`)
+cricket_long
+```
+Use ```str_match()``` to create new columns for each measurement for each player innings
+```{r}
+cricket_long <- cricket_long %>%
+  mutate(batting_number = str_match(performance, "number (\\d+)")[,2], 
+         score = str_match(performance, "scored (\\d+)")[,2], 
+         balls = str_match(performance, "from (\\d+)")[,2])
+cricket_long
+```
+## (b) Recode the data to make it "tame":
+- 'team', 'role' and 'innings' variables are coded as factors
+- 'batter' and 'performance' is coded as character (by default)
+- 'batting_number', 'score' and 'balls' are coded as integer
+```{r}
+cricket_long$team <- factor(cricket_long$team)
+cricket_long$role <- factor(cricket_long$role)
+cricket_long$innings <- factor(cricket_long$innings)
+
+cricket_long$batting_number <- as.integer(cricket_long$batting_number)
+cricket_long$score <- as.integer(cricket_long$score)
+cricket_long$balls <- as.integer(cricket_long$balls)
+
+cricket_long
+```
+## (c) Clean the data, recode the factors using ```fct_recode()``` such that there are no typo in the team names and player roles
+```{r}
+cricket_long$role<-fct_recode(cricket_long$role,
+           "all-rounder" = "all rounder",
+           "all-rounder" = "allrounder",
+           "batter" = "bat",
+           "batter" = "batsman",
+           "batter" = "batting",
+           "bowler" = "bowl",
+           "bowler" = "bowling"
+           )
+
+cricket_long$team <-fct_recode(cricket_long$team,
+                               Australia = "Aus",
+                               England = "Eng")
+unique(cricket_long$role)
+unique(cricket_long$team)
+```
+# Question Two: Univariate Analysis
+## (a) Produce a histogram of all scores during the series
+```{r scoreplot,message = FALSE, warning =FALSE, fig.cap = "Histogram of all scores during the series"}
+cricket_long %>%
+  ggplot(aes(score)) + geom_histogram(fill = "orange",col = "black")+
+  labs(y = "Frequency")
+```
+
+## (b) Describe the distribution of score
+**Shape:**
+
+* Asymmetrical 
+* Positively skewed (right skewed)
+* Unimodal: only one distinct peak in the distribution
+
+**Location**:
+
+```{r}
+summary(cricket_long$score)
+```
+
+* Mean: 23.94
+* Median: 12
+* Mode: 0
+
+As expected for right skewed distribution, mean > median > mode
+
+**Spead**:
+```{r}
+sd(cricket_long$score, na.rm = TRUE)
+IQR(cricket_long$score, na.rm = TRUE)
+```
+* Standard deviation: 31.7 
+* IQR = 26.5
+
+**Outliers**:
+```{r warning = FALSE, fig.cap = "Boxplot of all scores during the series", fig.width = 2, fig.align = "center"}
+cricket_long %>%
+  ggplot(aes(y = score)) +geom_boxplot()
+```
+
+* Based on the boxplot, there are many potential outliers that have score higher the upper fence of the boxplot
+* Upper Fence = Q3 + 1.5xIQR = 30.5 + 1.5(30.5 - 4) = 70.25
+* Potentially there are 17 outliers 
+
+```{r}
+cricket_long %>% filter(score > 70.25) %>% count()
+```
+## (c) Produce a bar chart of the teams in the series
+```{r fig.pos = "h", fig.cap = "Bar Chart of the teams participating in the series"}
+cricket_long %>% 
+  select(`batter`:`performance`) %>%
+  spread(key = innings, value = performance) %>%
+  ggplot(aes(team,fill = team)) + geom_bar() + 
+  geom_text(stat='count', aes(label = after_stat(count)))
+```
+As each player is represented by 10 rows, we revert back to wide format, hence the number of players are:
+
+* Australia: 16 players
+* England: 15 players
+
+# Question Three: Scores for each team
+## (a) Using ggplot, produce histograms of scores during the series, faceted by team
+```{r message = FALSE, warning = FALSE, fig.cap = "Histogram of scores during the series, faceted by team"}
+cricket_long %>% 
+  ggplot(aes(score, fill = team)) + geom_histogram(col ="Black") +
+  labs(y = "Frequency") +
+  facet_wrap(~team)
+
+```
+
+## (b) Produce side-by-side boxplots of scores by each team during the series
+```{r warning = FALSE, fig.width = 4, fig.height = 4, fig.cap = "Side-by-side boxplots of scores by each team", fig.align="center"}
+cricket_long %>%
+  ggplot(aes(y = score, x = team, fill = team)) + geom_boxplot() 
+```
+
+## (c) Compare the distribution of scores by each team during the series
+
+**Shape**:
+
+* Referencing histogram from (a)
+* Distributions of scores for Australia and England are very similar
+* They are both asymmetrical, positively skewed, unimodal
+
+**Location**:
+
+```{r}
+cricket_long %>% group_by(team) %>% 
+  summarise(median_score = median(score, na.rm = TRUE), 
+            mean_score = mean(score, na.rm = TRUE))
+```
+
+* Mean score for Australia is higher than England (25.4 > 22.557), likely due to the high value outliers coming from Australia distribution (as can be seen from calculation)
+* Median scores are similar at 12 for both team (as can be seen from the box plot and calculation)
+* Mode score for Australia is 0, which is slightly smaller than mode score for England (based on our histogram). However, note that the mode score as seen from the histogram also depends on the bin width (For our plot, the bin width is around 6~7). It can also be argued that the mode score for both team is around 0 if we choose a different bin size. 
+
+**Spread**:
+
+```{r}
+cricket_long %>% group_by(team) %>% 
+  summarise(standard_deviation = sd(score, na.rm = TRUE), 
+            IQR = IQR(score, na.rm = TRUE))
+``` 
+* Standard deviation of scores for Australia is 35.656, which is greater than the standard deviation of 27.506 for England
+* Similarly, IQR for Australia is 29, which is greater than the IQR of 26 for England. 
+* From the box plot, it can also be seen that IQR for Australia is greater than England
+
+**Outliers**:
+
+* Based on the box plot, there are potential outliers for both team.
+* Outliers for both team lie in a similar range
+* Note that for Australia, there is one outlier with an exceptionally high score (>200)
+* Outliers should not be removed for analysis unless there are measurement issue or error when the raw data was captured
+
+**Based on the calculation of spread (standard deviation) as well as the box plot, *Australia* had a higher variability of scores!**
+
+# Question Four: Scoring rates
+## (a) Produce a scatterplot of scores against number of balls
+```{r message = FALSE, warning = FALSE, fig.cap = "Scatterplot of scores against number of balls"}
+cricket_long %>%
+  ggplot(aes(x = balls, y = score)) + geom_point() + geom_smooth()
+```
+
+## (b) Describe the relationship between score and number of balls
+
+* There is a moderate, positive, linear relationship between score and number of balls
+* **From the plot, players who face more balls are likely to score more runs**
+
+## (c) Compute a new variable, scoring_rate. Produce scatterplot of scoring_rate against number of balls
+
+```{r}
+cricket_long <- cricket_long %>%
+  mutate(scoring_rate = score/balls)
+cricket_long
+```
+
+```{r warning = FALSE, fig.cap = "Scatterplot of scoring rate against number of balls"}
+cricket_long %>%
+  ggplot (aes(x=balls, y = scoring_rate)) +geom_point()
+```
+
+## (d) Relationship between scoring rate and number of balls?
+
+* There isn't a clear relationship between scoring rate and number of balls
+* Players who face more balls are *NOT* likely to score runs more quickly
+
+# Question Five: Teams' roles
+## (a) Produce a bar chart of the number of players on each team participating in the series, with segments coloured by the players' roles
+```{r fig.cap = "Bar chart of the number of players on each team segmented by players' roles"}
+cricket_long %>%
+  select(`batter`:`performance`) %>%
+  spread(key = innings, value = performance) %>%
+  ggplot(aes(x = team, fill = role)) + geom_bar() 
+```
+
+## (b) Produce a contingency table of the proportion of players from each team who play in each particular role
+```{r}
+contigency <- table(cricket_long$team, cricket_long$role)
+contigency_prop <- prop.table(contigency, margin =1)
+kable(contigency_prop, caption = "Contigency table")
+```
+
+## (c) From these 2 figures:
+
+* Australia is made up of a larger proportion of batters
+* England contains a larger proportion of all-rounders
